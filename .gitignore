@@ -136,6 +136,10 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
-# macOS system files
+# macOS System file
 .DS_Store
 **/.DS_Store
+
+#debug
+exifread_debug.txt
+debug.txt

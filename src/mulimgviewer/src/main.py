@@ -7,13 +7,21 @@ import numpy as np
 import wx
 from ..gui.main_gui import MulimgViewerGui
 
-from .. import __version__ as VERSION  # type: ignore
+from .. import __version__ as VERSION
 from .about import About
 from .index_table import IndexTable
 from .utils import MyTestEvent, get_resource_path
 from .utils_img import ImgManager
+from .custom_func.main import get_available_algorithms
 import json
 import shutil
+import os
+import time
+import shutil
+import sys
+import sys
+import shutil
+import importlib
 
 class MulimgViewer (MulimgViewerGui):
 
@@ -24,7 +32,7 @@ class MulimgViewer (MulimgViewerGui):
         self.UpdateUI = UpdateUI
         self.get_type = get_type
 
-        acceltbl = wx.AcceleratorTable([(wx.ACCEL_NORMAL, wx.WXK_UP,
+        self.acceltbl = wx.AcceleratorTable([(wx.ACCEL_NORMAL, wx.WXK_UP,
                                          self.menu_up.GetId()),
                                         (wx.ACCEL_NORMAL, wx.WXK_DOWN,
                                          self.menu_down.GetId()),
@@ -35,7 +43,7 @@ class MulimgViewer (MulimgViewerGui):
                                         (wx.ACCEL_NORMAL, wx.WXK_DELETE,
                                          self.menu_delete_box.GetId())
                                         ])
-        self.SetAcceleratorTable(acceltbl)
+        self.SetAcceleratorTable(self.acceltbl)
         # self.img_Sizer = self.scrolledWindow_img.GetSizer()
         self.Bind(wx.EVT_CLOSE, self.close)
         # self.Bind(wx.EVT_PAINT, self.OnPaint)
@@ -43,9 +51,10 @@ class MulimgViewer (MulimgViewerGui):
         # parameter
         self.out_path_str = ""
         self.img_name = []
+        self.selected_img_id = 0
         self.position = [0, 0]
         self.Uint = self.scrolledWindow_img.GetScrollPixelsPerUnit()
-        self.Status_number = self.m_statusBar1.GetFieldsCount()
+        self.Status_number = self.ID_status_display.GetFieldsCount()
         self.img_size = [-1, -1]
         self.width = 1000
         self.height = 600
@@ -64,7 +73,7 @@ class MulimgViewer (MulimgViewerGui):
         self.icon = wx.Icon(get_resource_path(
             'mulimgviewer.png'), wx.BITMAP_TYPE_PNG)
         self.SetIcon(self.icon)
-        self.m_statusBar1.SetStatusWidths([-2, -1, -4, -4])
+        self.ID_status_display.SetStatusWidths([-2, -3, -4, -2])
         self.set_title_font()
         self.hidden_flag = 0
         self.button_open_all.SetToolTip("open")
@@ -99,6 +108,10 @@ class MulimgViewer (MulimgViewerGui):
         self.colourPicker_draw.Bind(
             wx.EVT_COLOURPICKER_CHANGED, self.draw_color_change)
 
+        # Set ShowAllFunc and ShowCurrFunc mutually exclusive
+        self.show_all_func.Bind(wx.EVT_CHECKBOX, self.on_show_all_func_changed)
+        self.show_custom_func.Bind(wx.EVT_CHECKBOX, self.on_show_custom_func_changed)
+
         # Check the software version
         self.myEVT_MY_TEST = wx.NewEventType()
         EVT_MY_TEST = wx.PyEventBinder(self.myEVT_MY_TEST, 1)
@@ -112,11 +125,15 @@ class MulimgViewer (MulimgViewerGui):
                 self.ImgManager.init(default_path, type=2)  # one_dir_mul_img
                 self.show_img_init()
                 self.ImgManager.set_action_count(0)
-                self.show_img()
+                self.show_img(event=None)
             except:
                 pass
-
         self.load_configuration( None , config_name="output.json")
+        self.Bind(wx.EVT_CONTEXT_MENU, self.on_right_click)
+        self.custom_algorithms = []
+        # self.refresh_algorithm_list()
+        self.load_configuration( None , config_name="output.json")
+        self._bind_settings_wheel_guard()
 
     def EVT_MY_TEST_OnHandle(self, event):
         self.about_gui(None, update=True, new_version=event.GetEventArgs())
@@ -131,7 +148,6 @@ class MulimgViewer (MulimgViewerGui):
         try:
             # make request to be an optional depend
             import requests
-
             resp = requests.get(url)
             resp.encoding = 'UTF-8'
             if resp.status_code == 200:
@@ -174,7 +190,7 @@ class MulimgViewer (MulimgViewerGui):
         elif input_mode == 2:
             self.one_dir_mul_dir_manual(event)
         elif input_mode == 3:
-            self.onefilelist()
+            self.onefilelist(event)
 
     def close(self, event):
         if self.get_type() == -1:
@@ -186,7 +202,7 @@ class MulimgViewer (MulimgViewerGui):
         if self.ImgManager.img_num != 0:
             self.show_img_init()
             self.ImgManager.add()
-            self.show_img()
+            self.show_img(event)
         else:
             self.SetStatusText_(
                 ["-1", "", "***Error: First, need to select the input dir***", "-1"])
@@ -196,7 +212,7 @@ class MulimgViewer (MulimgViewerGui):
         if self.ImgManager.img_num != 0:
             self.show_img_init()
             self.ImgManager.subtract()
-            self.show_img()
+            self.show_img(event)
         else:
             self.SetStatusText_(
                 ["-1",  "", "***Error: First, need to select the input dir***", "-1"])
@@ -206,7 +222,7 @@ class MulimgViewer (MulimgViewerGui):
         if self.ImgManager.img_num != 0:
             self.show_img_init()
             self.ImgManager.set_action_count(self.slider_img.GetValue())
-            self.show_img()
+            self.show_img(event)
         else:
             self.SetStatusText_(
                 ["-1", "", "***Error: First, need to select the input dir***", "-1"])
@@ -222,8 +238,7 @@ class MulimgViewer (MulimgViewerGui):
             if self.ImgManager.img_num != 0:
                 self.show_img_init()
                 self.ImgManager.set_action_count(value)
-                self.show_img()
-                self
+                self.show_img(event)
             else:
                 self.SetStatusText_(
                     ["-1", "", "***Error: First, need to select the input dir***", "-1"])
@@ -231,6 +246,10 @@ class MulimgViewer (MulimgViewerGui):
 
     def save_img(self, event):
         type_ = self.choice_output.GetSelection()
+        save_format = self.save_format.GetSelection()
+        if hasattr(self, 'ImgManager') and hasattr(self.ImgManager, 'layout_params'):
+            if len(self.ImgManager.layout_params) > 35:
+                self.ImgManager.layout_params[35] = save_format
         if self.auto_save_all.Value:
             last_count_img = self.ImgManager.action_count
             self.ImgManager.set_action_count(0)
@@ -248,13 +267,12 @@ class MulimgViewer (MulimgViewerGui):
                     self.SetStatusText_(
                         ["-1", "-1", "***"+str(self.ImgManager.name_list[self.ImgManager.action_count])+", saving img***", "-1"])
                     self.ImgManager.get_flist()
-                    if self.customfunc.Value:
+                    if self.show_custom_func.Value:
                         self.ImgManager.layout_params[32] = True  # customfunc
                         self.ImgManager.save_img(self.out_path_str, type_)
                         self.ImgManager.layout_params[32] = False  # customfunc
                     self.ImgManager.save_img(self.out_path_str, type_)
-                    self.ImgManager.save_stitch_img_and_customfunc_img(self.out_path_str, self.customfunc.Value)
-
+                    self.ImgManager.save_stitch_img_and_customfunc_img(self.out_path_str, self.show_custom_func.Value)
                     self.ImgManager.add()
                 self.ImgManager.set_action_count(last_count_img)
                 self.SetStatusText_(
@@ -265,12 +283,12 @@ class MulimgViewer (MulimgViewerGui):
                     ["-1", "-1", "***"+str(self.ImgManager.name_list[self.ImgManager.action_count])+", saving img...***", "-1"])
             except:
                 pass
-            if self.customfunc.Value:
+            if self.show_custom_func.Value:
                 self.ImgManager.layout_params[32] = True  # customfunc
                 self.ImgManager.save_img(self.out_path_str, type_)
                 self.ImgManager.layout_params[32] = False  # customfunc
             flag = self.ImgManager.save_img(self.out_path_str, type_)
-            self.ImgManager.save_stitch_img_and_customfunc_img(self.out_path_str, self.customfunc.Value)
+            self.ImgManager.save_stitch_img_and_customfunc_img(self.out_path_str, self.show_custom_func.Value)
 
             if flag == 0:
                 self.SetStatusText_(
@@ -298,7 +316,7 @@ class MulimgViewer (MulimgViewerGui):
     def refresh(self, event):
         if self.ImgManager.img_num != 0:
             self.show_img_init()
-            self.show_img()
+            self.show_img(event)
         else:
             self.SetStatusText_(
                 ["-1", "", "***Error: First, need to select the input dir***", "-1"])
@@ -313,7 +331,7 @@ class MulimgViewer (MulimgViewerGui):
                 dlg.GetPath(), type=0, parallel_to_sequential=self.parallel_to_sequential.Value)
             self.show_img_init()
             self.ImgManager.set_action_count(0)
-            self.show_img()
+            self.show_img(event)
             self.choice_input_mode.SetSelection(1)
         self.SetStatusText_(["Input", "-1", "-1", "-1"])
 
@@ -340,13 +358,13 @@ class MulimgViewer (MulimgViewerGui):
             self.ImgManager.init(dlg.GetPath(), type=2)
             self.show_img_init()
             self.ImgManager.set_action_count(0)
-            self.show_img()
+            self.show_img(event)
             self.choice_input_mode.SetSelection(0)
 
         self.SetStatusText_(
             ["Sequential choose input dir", "-1", "-1", "-1"])
 
-    def onefilelist(self):
+    def onefilelist(self, event):
         self.SetStatusText_(["Choose the File List", "", "", "-1"])
         wildcard = "List file (*.txt; *.csv)|*.txt;*.csv|" \
             "All files (*.*)|*.*"
@@ -357,7 +375,7 @@ class MulimgViewer (MulimgViewerGui):
             self.ImgManager.init(dlg.GetPath(), type=3)
             self.show_img_init()
             self.ImgManager.set_action_count(0)
-            self.show_img()
+            self.show_img(event)
             self.choice_input_mode.SetSelection(3)
         self.SetStatusText_(["Choose the File List", "-1", "-1", "-1"])
 
@@ -374,7 +392,7 @@ class MulimgViewer (MulimgViewerGui):
                 input_path[0:-1], type=1, parallel_to_sequential=self.parallel_to_sequential.Value)
             self.show_img_init()
             self.ImgManager.set_action_count(0)
-            self.show_img()
+            self.show_img(event)
             self.choice_input_mode.SetSelection(2)
 
     def save_flist_parallel_manual(self, event):
@@ -403,7 +421,7 @@ class MulimgViewer (MulimgViewerGui):
 
         if dlg.ShowModal() == wx.ID_OK:
             self.out_path_str = dlg.GetPath()
-            self.m_statusBar1.SetStatusText(self.out_path_str, 3)
+            self.ID_status_display.SetStatusText(self.out_path_str, 3)
 
     def colour_change(self, event):
         c = self.colourPicker_gap.GetColour()
@@ -542,9 +560,160 @@ class MulimgViewer (MulimgViewerGui):
     def SetStatusText_(self, texts):
         for i in range(self.Status_number):
             if texts[i] != '-1':
-                self.m_statusBar1.SetStatusText(texts[i], i)
+                self.ID_status_display.SetStatusText(texts[i], i)
+
+    def update_status_bar_for_current_page(self, clicked_img_id=None):
+        try:
+            page_num = self.ImgManager.action_count if hasattr(self.ImgManager, 'action_count') else 0
+            if self.ImgManager.type == 2:
+                total_imgs = self.ImgManager.img_num
+                img_index = self.ImgManager.action_count * self.ImgManager.count_per_action
+                if clicked_img_id is not None:
+                    img_index = img_index + clicked_img_id
+                status_text = f"{img_index}-th/{total_imgs} img 0-th/1 dir"
+
+            elif self.ImgManager.type in [0, 1]:
+                if hasattr(self.ImgManager, 'get_dir_num'):
+                    total_dirs = self.ImgManager.get_dir_num()
+                else:
+                    total_dirs = self.ImgManager.max_action_num if hasattr(self.ImgManager, 'max_action_num') else 0
+                if self.parallel_sequential.Value:
+                    # parallel_sequential
+                    target_img_id = clicked_img_id if clicked_img_id is not None else 0
+                    if hasattr(self, 'current_page_img_paths') and target_img_id < len(self.current_page_img_paths):
+                        current_file_path = self.current_page_img_paths[target_img_id]
+                        current_dir = os.path.dirname(current_file_path)
+
+                        if os.path.exists(current_dir):
+                            img_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.gif', '.webp'}
+                            files_in_folder = sorted([
+                                os.path.join(current_dir, f)
+                                for f in os.listdir(current_dir)
+                                if Path(f).suffix.lower() in img_extensions
+                            ])
+                            actual_folder_img_count = len(files_in_folder)
+
+                            if current_file_path in files_in_folder:
+                                pos_in_folder = files_in_folder.index(current_file_path)
+                            else:
+                                pos_in_folder = 0
+                            all_dirs = sorted(list(set(os.path.dirname(p) for p in self.ImgManager.flist)))
+                            actual_folder_idx = all_dirs.index(current_dir) if current_dir in all_dirs else page_num
+                        else:
+                            pos_in_folder = 0
+                            actual_folder_idx = page_num
+                            img_cols = self.ImgManager.layout_params[1][1]
+                            actual_folder_img_count = self.ImgManager.layout_params[1][0] * img_cols
+                    else:
+                        pos_in_folder = 0
+                        actual_folder_idx = page_num
+                        img_cols = self.ImgManager.layout_params[1][1]
+                        actual_folder_img_count = self.ImgManager.layout_params[1][0] * img_cols
+                    status_text = f"{pos_in_folder}-th/{actual_folder_img_count} img {actual_folder_idx}-th/{total_dirs} dir"
+
+                elif self.parallel_to_sequential.Value:
+                    # parallel_to_sequential
+                    target_img_id = clicked_img_id if clicked_img_id is not None else 0
+                    if hasattr(self, 'current_page_img_paths') and target_img_id < len(self.current_page_img_paths):
+                        current_file_path = self.current_page_img_paths[target_img_id]
+                        current_dir = os.path.dirname(current_file_path)
+                        img_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.gif', '.webp'}
+                        all_dirs_set = set()
+                        old_action_count = self.ImgManager.action_count
+                        for i in range(self.ImgManager.max_action_num):
+                            try:
+                                self.ImgManager.set_action_count(i)
+                                self.ImgManager.get_flist()
+                                all_dirs_set.update(os.path.dirname(p) for p in self.ImgManager.flist)
+                            except:
+                                pass
+                        self.ImgManager.set_action_count(old_action_count)
+
+                        all_dirs_global = sorted(list(all_dirs_set))
+                        total_dirs = len(all_dirs_global)
+                        actual_folder_idx = all_dirs_global.index(current_dir) if current_dir in all_dirs_global else 0
+                        try:
+                            files_in_folder = sorted([
+                                os.path.join(current_dir, f)
+                                for f in os.listdir(current_dir)
+                                if Path(f).suffix.lower() in img_extensions
+                            ])
+                            actual_folder_img_count = len(files_in_folder)
+                            pos_in_folder = files_in_folder.index(current_file_path) if current_file_path in files_in_folder else 0
+                        except:
+                            actual_folder_img_count = 0
+                            pos_in_folder = 0
+                        status_text = f"{pos_in_folder}-th/{actual_folder_img_count} img {actual_folder_idx}-th/{total_dirs} dir"
+                    else:
+                        try:
+                            self.ImgManager.get_flist()
+                            if len(self.ImgManager.flist) > 0:
+                                first_file_path = self.ImgManager.flist[0]
+                                first_dir = os.path.dirname(first_file_path)
+
+                                img_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.gif', '.webp'}
+                                files_in_folder = sorted([
+                                    os.path.join(first_dir, f)
+                                    for f in os.listdir(first_dir)
+                                    if Path(f).suffix.lower() in img_extensions
+                                ])
+                                pos_in_folder = files_in_folder.index(first_file_path) if first_file_path in files_in_folder else 0
+                                total_imgs = len(files_in_folder)
+                            else:
+                                pos_in_folder = 0
+                                total_imgs = 0
+                        except:
+                            pos_in_folder = 0
+                            total_imgs = 0
+                        status_text = f"{pos_in_folder}-th/{total_imgs} img {page_num}-th/{total_dirs} dir"
+                else:
+                    # parallel mode (do not check sequential)
+                    if clicked_img_id is not None and hasattr(self.ImgManager, 'flist') and clicked_img_id < len(self.ImgManager.flist):
+                        clicked_img_path = self.ImgManager.flist[clicked_img_id]
+                        clicked_dir = os.path.dirname(clicked_img_path)
+                        all_dirs = sorted(list(set(os.path.dirname(p) for p in self.ImgManager.flist)))
+                        dir_index = all_dirs.index(clicked_dir) if clicked_dir in all_dirs else page_num
+                        img_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.gif', '.webp'}
+                        if os.path.exists(clicked_dir):
+                            folder_images = sorted([
+                                os.path.join(clicked_dir, f)
+                                for f in os.listdir(clicked_dir)
+                                if Path(f).suffix.lower() in img_extensions
+                            ])
+                            img_count_in_folder = len(folder_images)
+                            img_pos_in_folder = folder_images.index(clicked_img_path) if clicked_img_path in folder_images else 0
+                        else:
+                            img_count_in_folder = 1
+                            img_pos_in_folder = 0
+                        status_text = f"{img_pos_in_folder}-th/{img_count_in_folder} img {dir_index}-th/{total_dirs} dir"
+                    else:
+                        total_pages = 0
+                        if hasattr(self.ImgManager, 'max_action_num'):
+                            total_pages = self.ImgManager.max_action_num
+                        else:
+                            total_pages = 0
+                        status_text = f"{page_num}-th/{total_pages} img 0-th/{total_dirs} dir"
+
+            elif self.ImgManager.type == 3:
+                target_img_id = clicked_img_id if clicked_img_id is not None else 0
+                img_index = self.ImgManager.action_count * self.ImgManager.count_per_action + target_img_id
+                if hasattr(self.ImgManager, 'path_list'):
+                    total_imgs = len(self.ImgManager.path_list)
+                else:
+                    total_imgs = 0
+
+                status_text = f"{img_index}-th/{total_imgs} img 0-th/0 dir"
+            else:
+                status_text = "0-th/0 img 0-th/0 dir"
+
+            self.ID_status_display.SetStatusText(status_text, 1)
+
+        except:
+            self.ID_status_display.SetStatusText("0-th/0 img 0-th/0 dir", 1)
 
     def img_left_click(self, event):
+
+        click_status = "0-th/0 img 0-th/0 dir"
 
         if self.magnifier.Value:
             x_0, y_0 = event.GetPosition()
@@ -557,6 +726,7 @@ class MulimgViewer (MulimgViewerGui):
             # select box
             x, y = event.GetPosition()
             id = self.get_img_id_from_point([x, y])
+            self.selected_img_id = id
             xy_grid = self.ImgManager.xy_grid[id]
             x = x-xy_grid[0]
             y = y-xy_grid[1]
@@ -569,7 +739,6 @@ class MulimgViewer (MulimgViewerGui):
             self.box_id = np.array(dist).argmin()
             str_ = str(self.box_id)
             self.SetStatusText_(["Select "+str_+"-th box",  "-1", "-1", "-1"])
-
             self.start_flag = 0
         else:
             # magnifier
@@ -587,7 +756,6 @@ class MulimgViewer (MulimgViewerGui):
             self.ImgManager.rotate(
                 self.get_img_id_from_point([x, y], img=True))
             self.refresh(event)
-
             self.SetStatusText_(["Rotate", "-1", "-1", "-1"])
 
         # flip
@@ -595,10 +763,7 @@ class MulimgViewer (MulimgViewerGui):
             x, y = event.GetPosition()
             self.ImgManager.flip(self.get_img_id_from_point(
                 [x, y], img=True), FLIP_TOP_BOTTOM=False)
-            # self.ImgManager.flip(self.get_img_id_from_point(
-            #     [x, y], img=True), FLIP_TOP_BOTTOM=self.checkBox_orientation.Value)
             self.refresh(event)
-
             self.SetStatusText_(["Flip", "-1", "-1", "-1"])
 
         # focus img
@@ -607,12 +772,10 @@ class MulimgViewer (MulimgViewerGui):
         else:
             self.img_panel.Children[0].SetFocus()
 
-        # show dir_id
         x, y = event.GetPosition()
-        id = self.get_img_id_from_point([x, y])
-        second_txt = self.m_statusBar1.GetStatusText(1)
-        second_txt = second_txt.split("/")[0]
-        self.m_statusBar1.SetStatusText(second_txt+"/"+str(id)+"-th dir", 1)
+        clicked_img_id = self.get_img_id_from_point([x, y])
+
+        self.update_status_bar_for_current_page(clicked_img_id)
 
     def img_left_dclick(self, event):
         if self.select_img_box.Value:
@@ -628,7 +791,22 @@ class MulimgViewer (MulimgViewerGui):
         if self.magnifier.Value != False and self.start_flag == 1:
             x, y = event.GetPosition()
             id = self.get_img_id_from_point([self.x_0, self.y_0])
-            xy_grid = self.ImgManager.xy_grid[id]
+            if hasattr(self.ImgManager, '_show_all_func_enabled') and self.ImgManager._show_all_func_enabled:
+
+                xy_grid_array = np.array(self.ImgManager.xy_grid)
+                xy_cur = np.array([[self.x_0, self.y_0]])
+                xy_cur = np.repeat(xy_cur, xy_grid_array.shape[0], axis=0)
+                res_ = xy_cur - xy_grid_array
+                id_list = []
+                for i in range(xy_grid_array.shape[0]):
+                    if res_[i][0] >= 0 and res_[i][1] >= 0:
+                        id_list.append(i)
+                    else:
+                        id_list.append(0)
+                actual_grid_id = max(id_list)
+                xy_grid = self.ImgManager.xy_grid[actual_grid_id]
+            else:
+                xy_grid = self.ImgManager.xy_grid[id]
             xy_limit = np.array(xy_grid) + \
                 np.array(self.ImgManager.img_resolution_show)
 
@@ -654,14 +832,33 @@ class MulimgViewer (MulimgViewerGui):
         RGBA = self.show_bmp_in_panel.getpixel((int(x), int(y)))
         x = x-xy_grid[0]
         y = y-xy_grid[1]
-        self.m_statusBar1.SetStatusText(str(x)+","+str(y)+"/"+str(RGBA), 0)
+        self.ID_status_display.SetStatusText(str(x)+","+str(y)+"/"+str(RGBA), 0)
 
     def img_left_release(self, event):
         if self.magnifier.Value != False:
             self.start_flag = 0
 
             id = self.get_img_id_from_point([self.x_0, self.y_0])
-            xy_grid = self.ImgManager.xy_grid[id]
+            if hasattr(self.ImgManager, '_show_all_func_enabled') and self.ImgManager._show_all_func_enabled:
+
+                layout_row, layout_col = self.ImgManager._show_all_func_layout
+                original_rows, original_cols = self.ImgManager._original_row_col
+                total_cols = layout_col * original_cols
+                xy_grid_array = np.array(self.ImgManager.xy_grid)
+                xy_cur = np.array([[self.x_0, self.y_0]])
+                xy_cur = np.repeat(xy_cur, xy_grid_array.shape[0], axis=0)
+                res_ = xy_cur - xy_grid_array
+                id_list = []
+                for i in range(xy_grid_array.shape[0]):
+                    if res_[i][0] >= 0 and res_[i][1] >= 0:
+                        id_list.append(i)
+                    else:
+                        id_list.append(0)
+                actual_grid_id = max(id_list)
+                xy_grid = self.ImgManager.xy_grid[actual_grid_id]
+            else:
+                xy_grid = self.ImgManager.xy_grid[id]
+
             x = self.x-xy_grid[0]
             y = self.y-xy_grid[1]
             x_0 = self.x_0 - xy_grid[0]
@@ -684,9 +881,30 @@ class MulimgViewer (MulimgViewerGui):
     def img_right_click(self, event):
         x, y = event.GetPosition()
         id = self.get_img_id_from_point([x, y])
-        xy_grid = self.ImgManager.xy_grid[id]
+        if hasattr(self.ImgManager, '_show_all_func_enabled') and self.ImgManager._show_all_func_enabled:
+
+            xy_grid_array = np.array(self.ImgManager.xy_grid)
+            xy_cur = np.array([[x, y]])
+            xy_cur = np.repeat(xy_cur, xy_grid_array.shape[0], axis=0)
+            res_ = xy_cur - xy_grid_array
+            id_list = []
+            for i in range(xy_grid_array.shape[0]):
+                if res_[i][0] >= 0 and res_[i][1] >= 0:
+                    id_list.append(i)
+                else:
+                    id_list.append(0)
+            actual_grid_id = max(id_list)
+            xy_grid = self.ImgManager.xy_grid[actual_grid_id]
+        else:
+            xy_grid = self.ImgManager.xy_grid[id]
         x = x-xy_grid[0]
         y = y-xy_grid[1]
+        menu_triggered = getattr(event, 'menu_triggered', False)
+
+        if not menu_triggered:
+            self.on_right_click(event)
+            return
+
         if self.select_img_box.Value:
             # move box
             if self.box_id != -1:
@@ -696,6 +914,7 @@ class MulimgViewer (MulimgViewerGui):
                 self.xy_magnifier[self.box_id] = points+show_scale+[
                     self.ImgManager.title_setting[2] and self.ImgManager.title_setting[1]]
                 self.refresh(event)
+                return
         else:
             # new box
             if self.magnifier.Value:
@@ -713,7 +932,230 @@ class MulimgViewer (MulimgViewerGui):
                 self.refresh(event)
                 self.SetStatusText_(["Magnifier", "-1", "-1", "-1"])
             else:
-                self.refresh(event)
+                if self.handle_title_injection(id):
+                    pass
+                else:
+                    self.refresh(event)
+        self.on_right_click(event)
+
+    def on_right_click(self, event):
+        # Right-click Menu​
+        menu = wx.Menu()
+        refresh_id = wx.Window.NewControlId()
+        menu.Append(refresh_id, "🔄 refresh")
+        menu.Bind(wx.EVT_MENU, self.refresh, id=refresh_id)
+
+        prev_id = wx.Window.NewControlId()
+        menu.Append(prev_id, "⬅️ Previous Page")
+        menu.Bind(wx.EVT_MENU, self.last_img, id=prev_id)
+
+        next_id = wx.Window.NewControlId()
+        menu.Append(next_id, "➡️ Next Page")
+        menu.Bind(wx.EVT_MENU, self.next_img, id=next_id)
+
+        save_single_id = wx.Window.NewControlId()
+        menu.Append(save_single_id, "💾 Save")
+        def save_current_page(evt):
+            # Default Save
+            self.save_img(evt)
+        menu.Bind(wx.EVT_MENU, save_current_page, id=save_single_id)
+
+        if (self.ImgManager.type == 0 or self.ImgManager.type == 1) and (self.parallel_sequential.Value):
+            save_column_id = wx.Window.NewControlId()
+            menu.Append(save_column_id, "📄 save(only select current location)")
+            def save_selected_column(evt):
+                # save current location images in all folders
+                if not self.out_path_str:
+                    self.out_path(evt)
+                    if not self.out_path_str:
+                        return
+                x, y = event.GetPosition()
+                clicked_grid_id = self.get_img_id_from_point([x, y])
+                # Retrieve ID information
+                if hasattr(self, 'current_page_img_paths') and clicked_grid_id < len(self.current_page_img_paths):
+                    target_path = self.current_page_img_paths[clicked_grid_id]
+                else:
+                    actual_img_index = self.ImgManager.xy_grids_id_list[clicked_grid_id] \
+                        if hasattr(self.ImgManager, 'xy_grids_id_list') and clicked_grid_id < len(self.ImgManager.xy_grids_id_list) \
+                        else clicked_grid_id
+
+                    if not hasattr(self.ImgManager, 'flist') or actual_img_index >= len(self.ImgManager.flist):
+                        self.SetStatusText_(["Cannot get clicked image", "-1", "-1", "-1"])
+                        return
+                    target_path = self.ImgManager.flist[actual_img_index]
+                if not target_path or not os.path.exists(target_path):
+                    self.SetStatusText_(["Invalid image path", "-1", "-1", "-1"])
+                    return
+                target_name = os.path.basename(target_path)
+                type_ = self.choice_output.GetSelection()
+                if self.show_custom_func.Value:
+                    self.ImgManager.layout_params[32] = True
+                    self.ImgManager.save_img(self.out_path_str, type_)
+                    self.ImgManager.layout_params[32] = False
+                self.ImgManager.save_img(self.out_path_str, type_)
+                self.ImgManager.save_stitch_img_and_customfunc_img(self.out_path_str, self.show_custom_func.Value)
+
+                # Call the default save function
+                select_folder = os.path.join(self.out_path_str, "select_images")
+                # override it with the new folder selection logic
+                if os.path.exists(select_folder):
+                    shutil.rmtree(select_folder)
+                os.makedirs(select_folder, exist_ok=True)
+                all_dirs = sorted(set(os.path.dirname(p) for p in self.ImgManager.flist))
+                success_count = 0
+                for folder_path in all_dirs:
+                    if not os.path.exists(folder_path):
+                        continue
+                    try:
+                        target_file = os.path.join(folder_path, target_name)
+                        if os.path.exists(target_file) and os.path.isfile(target_file):
+                            folder_name = os.path.basename(folder_path)
+                            sub_dir = os.path.join(select_folder, folder_name)
+                            os.makedirs(sub_dir, exist_ok=True)
+                            shutil.copy2(target_file, os.path.join(sub_dir, target_name))
+                            success_count += 1
+                    except:
+                        pass
+                status_msg = f"Save completed! select_images updated with {success_count} images (clicked: {target_name})" \
+                    if success_count > 0 \
+                    else f"Save completed, but no matching images found for {target_name}"
+                self.SetStatusText_([status_msg, "-1", "-1", "-1"])
+            menu.Bind(wx.EVT_MENU, save_selected_column, id=save_column_id)
+
+        if self.magnifier.Value:
+            new_box_id = wx.Window.NewControlId()
+            menu.Append(new_box_id, "🔍 Create zoom box here")
+
+            def create_magnifier_box(evt):
+                event.menu_triggered = True
+                x, y = event.GetPosition()
+                id = self.get_img_id_from_point([x, y])
+                xy_grid = self.ImgManager.xy_grid[id]
+                x = x-xy_grid[0]
+                y = y-xy_grid[1]
+
+                if self.magnifier.Value:
+                    self.color_list.append(self.colourPicker_draw.GetColour())
+                    try:
+                        show_scale = self.show_scale.GetLineText(0).split(',')
+                        show_scale = [float(x) for x in show_scale]
+                        if len(self.xy_magnifier) == 0:
+                            default_size = 50
+                            points = self.ImgManager.ImgF.sort_box_point(
+                                [x-default_size//2, y-default_size//2, x+default_size//2, y+default_size//2],
+                                show_scale, self.ImgManager.img_resolution_origin, first_point=True)
+                            self.xy_magnifier.append(
+                                points+show_scale+[self.ImgManager.title_setting[2] and self.ImgManager.title_setting[1]])
+                        else:
+                            points = self.move_box_point(x, y, show_scale)
+                            self.xy_magnifier.append(
+                                points+show_scale+[self.ImgManager.title_setting[2] and self.ImgManager.title_setting[1]])
+                        self.refresh(evt)
+                        self.SetStatusText_(["Create a zoom box", "-1", "-1", "-1"])
+                    except Exception as e:
+                        self.SetStatusText_(["-1", f"Failed to create zoom box: {str(e)}", "-1", "-1"])
+            menu.Bind(wx.EVT_MENU, create_magnifier_box, id=new_box_id)
+
+        if len(self.xy_magnifier) > 0:
+            clear_all_id = wx.Window.NewControlId()
+            menu.Append(clear_all_id, "🗑️ Clear all zoom boxes")
+            menu.Bind(wx.EVT_MENU, self.img_left_dclick, id=clear_all_id)
+
+        if self.select_img_box.Value:
+            box_menu = wx.Menu()
+
+            if self.box_id != -1:
+                move_box_id = wx.Window.NewControlId()
+                box_menu.Append(move_box_id, f"Move box {self.box_id} to this position")
+
+                def move_box_to_position(evt):
+                    event.menu_triggered = True
+                    self.img_right_click(event)
+                    self.refresh(evt)
+                    self.SetStatusText_([f"Move box {self.box_id}", "-1", "-1", "-1"])
+                box_menu.Bind(wx.EVT_MENU, move_box_to_position, id=move_box_id)
+                delete_box_id = wx.Window.NewControlId()
+                box_menu.Append(delete_box_id, f"Delete box {self.box_id}")
+                def delete_specific_box(evt):
+                    if self.select_img_box.Value and self.box_id != -1:
+                        self.xy_magnifier.pop(self.box_id)
+                        if len(self.xy_magnifier) == 0:
+                            self.box_position.SetSelection(0)
+                        self.refresh(evt)
+                        self.SetStatusText_([f"Delete box {self.box_id}", "-1", "-1", "-1"])
+                box_menu.Bind(wx.EVT_MENU, delete_specific_box, id=delete_box_id)
+            menu.AppendSubMenu(box_menu, f"Selection box" + (f" ({self.box_id})" if self.box_id != -1 else ""))
+
+        if hasattr(self, 'title_rename_text'):
+            new_title = self.title_rename_text.GetValue().strip()
+            if new_title:
+                inject_title_id = wx.Window.NewControlId()
+                display_title = new_title[:20] + "..." if len(new_title) > 20 else new_title
+                menu.Append(inject_title_id, f"📝 Inject title: {display_title}")
+                def inject_title_directly(evt):
+                    x, y = event.GetPosition()
+                    id = self.get_img_id_from_point([x, y])
+                    success = self.handle_title_injection(id)
+                    if success:
+                        self.SetStatusText_(["Title injected successfully", "-1", "-1", "-1"])
+                    else:
+                        self.SetStatusText_(["Failed to inject title", "-1", "-1", "-1"])
+                menu.Bind(wx.EVT_MENU, inject_title_directly, id=inject_title_id)
+                menu.AppendSeparator()
+        try:
+            mouse_screen_pos = wx.GetMousePosition()
+            client_pos = self.ScreenToClient(mouse_screen_pos)
+        except:
+            client_pos = wx.Point(100, 100)
+
+        self.PopupMenu(menu, client_pos)
+        menu.Destroy()
+
+    #--exif--
+    def on_title_exif_changed(self, event):
+        if hasattr(self, 'ImgManager') and hasattr(self.ImgManager, 'layout_params'):
+            if len(self.ImgManager.layout_params) > 17:
+                self.ImgManager.layout_params[17][11] = self.title_exif.Value
+                self.ImgManager.load_exif_display_config(force_reload=True)
+
+    def inject_new_title(self, new_title, img_id=None):
+        try:
+            if img_id is not None:
+                current_index = img_id
+            else:
+                current_index = getattr(self, 'selected_img_id', self.ImgManager.action_count)
+            if hasattr(self.ImgManager, 'xy_grids_id_list') and current_index < len(self.ImgManager.xy_grids_id_list):
+                actual_img_index = self.ImgManager.xy_grids_id_list[current_index]
+            else:
+                actual_img_index = current_index
+            if actual_img_index < len(self.ImgManager.flist):
+                img_path = self.ImgManager.flist[actual_img_index]
+                success = self.ImgManager.update_image_exif_37510(img_path, new_title)
+                if success:
+                    self.ImgManager.get_img_list()
+
+                    if hasattr(self, 'title_rename_text'):
+                        self.title_rename_text.SetValue("")
+                    self.SetStatusText_([f"The title has been injected into {current_index+1} images: {new_title}", "-1", "-1", "-1"])
+                else:
+                    raise Exception("Failed to write EXIF")
+            else:
+                raise Exception(f"Picture index {actual_img_index} out of range")
+
+        except:
+            pass
+
+    def handle_title_injection(self, img_id = None):
+        if not hasattr(self, 'title_rename_text'):
+            return False
+        new_title = self.title_rename_text.GetValue().strip()
+        if not new_title:
+            return False
+        try:
+            self.inject_new_title(new_title, img_id)
+            return True
+        except:
+            return False
 
     def move_box_point(self, x, y, show_scale):
         x_0, y_0, x_1, y_1 = self.xy_magnifier[0][0:4]
@@ -766,7 +1208,19 @@ class MulimgViewer (MulimgViewerGui):
                     show_scale = [1, 1]
                 self.show_scale.Value = str(
                     round(show_scale[0], 2))+","+str(round(show_scale[1], 2))
+                for i in range(len(self.xy_magnifier)):
+                    x_0, y_0, x_1, y_1 = self.xy_magnifier[i][0:4]
+                    show_scale_old = self.xy_magnifier[i][4:6]
 
+                    scale_ratio = [show_scale[0]/show_scale_old[0], show_scale[1]/show_scale_old[1]]
+
+                    x_0 = int(x_0 * scale_ratio[0])
+                    x_1 = int(x_1 * scale_ratio[0])
+                    y_0 = int(y_0 * scale_ratio[1])
+                    y_1 = int(y_1 * scale_ratio[1])
+
+                    self.xy_magnifier[i][0:4] = [x_0, y_0, x_1, y_1]
+                    self.xy_magnifier[i][4:6] = show_scale
                 self.refresh(event)
             else:
                 pass
@@ -828,10 +1282,8 @@ class MulimgViewer (MulimgViewerGui):
                 self.key_status["ctrl"] = 1
         elif event.GetKeyCode() == wx.WXK_SHIFT:
             self.shift_pressed = True
-            # 检查是否同时按下 Shift 和 'S'
         elif event.GetKeyCode() == ord('S'):
             if self.shift_pressed == True:
-                # Shift + S 被按下，做出反应
                 if self.key_status["shift_s"] == 0:
                     self.key_status["shift_s"] = 1
                 elif self.key_status["shift_s"] == 1:
@@ -920,6 +1372,7 @@ class MulimgViewer (MulimgViewerGui):
             elif self.ImgManager.type == 2 or self.ImgManager.type == 3:
                 self.ImgManager.set_count_per_action(
                     layout_params[0][0]*layout_params[0][1]*layout_params[1][0]*layout_params[1][1])
+            self.update_status_bar_for_current_page()
 
     def set_img_layout(self):
 
@@ -1001,7 +1454,8 @@ class MulimgViewer (MulimgViewerGui):
                              self.title_font_size.Value,                # 8
                              self.font_paths,                           # 9
                              self.title_position.GetSelection(),        # 10
-                             self.title_exif.Value]                     # 11
+                             self.title_exif.Value,                     # 11
+                             self.title_show_rename.Value]              # 12
 
             if title_setting[0]:
                 if self.ImgManager.type == 0 or self.ImgManager.type == 1:
@@ -1055,16 +1509,21 @@ class MulimgViewer (MulimgViewerGui):
                     magnifer_row_col,                       # 29
                     self.onetitle.Value,                    # 30
                     magnifier_out_scale,                    # 31
-                    self.customfunc.Value,                  # 32
+                    self.show_custom_func.Value,            # 32
                     self.out_path_str,                      # 33
                     self.Magnifier_format.GetSelection(),   # 34
                     self.save_format.GetSelection(),        # 35
                     self.show_unit.Value,                   # 36
-                    self.show_custom.Value]                 # 37
+                    self.customfunc_choice.GetSelection(),  # 37
+                    self.show_all_func.Value,               # 38
+                    self.show_all_func_layout.Value,        # 39
+                    self.func_layout_vertical.Value ]       # 40
 
-    def show_img(self):
+    def show_img(self, event):
+        if hasattr(self, 'm_staticText1'):
+            self.m_staticText1.Hide()
 
-        if self.customfunc.Value and self.out_path_str == "":
+        if self.show_custom_func.Value and self.out_path_str == "":
             self.out_path(None)
             self.ImgManager.layout_params[33] = self.out_path_str
         # check layout_params change
@@ -1100,9 +1559,13 @@ class MulimgViewer (MulimgViewerGui):
         if self.ImgManager.max_action_num > 0:
             self.slider_img.SetMax(self.ImgManager.max_action_num-1)
             self.ImgManager.get_flist()
+            self.current_page_img_paths = copy.deepcopy(self.ImgManager.flist)
+            expected_num = self.ImgManager.count_per_action
+            if len(self.current_page_img_paths) < expected_num:
+                self.current_page_img_paths += [None] * (expected_num - len(self.current_page_img_paths))
 
             # show the output image processed by the custom func; return cat(bmp, customfunc_img)
-            if self.customfunc.Value:
+            if self.show_custom_func.Value:
                 self.ImgManager.layout_params[32] = True  # customfunc
                 self.ImgManager.stitch_images(
                     0, copy.deepcopy(self.xy_magnifier))
@@ -1110,7 +1573,7 @@ class MulimgViewer (MulimgViewerGui):
             flag = self.ImgManager.stitch_images(
                 0, copy.deepcopy(self.xy_magnifier))
             if flag == 0:
-                bmp = self.ImgManager.show_stitch_img_and_customfunc_img(self.customfunc.Value)
+                bmp = self.ImgManager.show_stitch_img_and_customfunc_img(self.show_custom_func.Value)
                 self.show_bmp_in_panel = bmp
                 self.img_size = bmp.size
                 bmp = self.ImgManager.ImgF.PIL2wx(bmp)
@@ -1136,28 +1599,25 @@ class MulimgViewer (MulimgViewerGui):
                 self.img_panel.Children[0].Bind(
                     wx.EVT_KEY_UP, self.key_up_detect)
 
-            # status
-            if self.ImgManager.type == 2 or ((self.ImgManager.type == 0 or self.ImgManager.type == 1) and self.parallel_sequential.Value):
-                try:
-                    self.SetStatusText_(
-                        ["-1", str(self.ImgManager.action_count)+"/"+str(self.ImgManager.get_dir_num())+" dir", str(self.ImgManager.img_resolution[0])+"x"+str(self.ImgManager.img_resolution[1])+" pixels / "+str(self.ImgManager.name_list[self.ImgManager.img_count])+"-"+str(self.ImgManager.name_list[self.ImgManager.img_count+self.ImgManager.count_per_action-1]), "-1"])
-                except:
-                    self.SetStatusText_(
-                        ["-1", str(self.ImgManager.action_count)+"/"+str(self.ImgManager.get_dir_num())+" dir", str(self.ImgManager.img_resolution[0])+"x"+str(self.ImgManager.img_resolution[1])+" pixels / "+str(self.ImgManager.name_list[self.ImgManager.img_count])+"-"+str(self.ImgManager.name_list[self.ImgManager.img_num-1]), "-1"])
-            else:
-                self.SetStatusText_(
-                    ["-1", str(self.ImgManager.action_count)+"/"+str(self.ImgManager.get_dir_num())+" dir", str(self.ImgManager.img_resolution[0])+"x"+str(self.ImgManager.img_resolution[1])+" pixels / "+self.ImgManager.get_stitch_name(), "-1"])
-            if flag == 1:
-                self.SetStatusText_(
-                    ["-1", str(self.ImgManager.action_count)+"/"+str(self.ImgManager.get_dir_num())+" dir", "***Error: "+str(self.ImgManager.name_list[self.ImgManager.action_count]) + ", during stitching images***", "-1"])
-            if flag == 2:
-                self.SetStatusText_(
-                    ["-1", "-1", "No image is displayed! Check Show original/Show 🔍️/Show title.", "-1"])
+            self.update_status_bar_for_current_page()
+            try:
+                if self.ImgManager.type == 2 or ((self.ImgManager.type == 0 or self.ImgManager.type == 1) and self.parallel_sequential.Value):
+                    start_img = self.ImgManager.img_count
+                    end_img = min(self.ImgManager.img_count + self.ImgManager.count_per_action - 1, self.ImgManager.img_num - 1)
+                    img_range = f"{self.ImgManager.name_list[start_img]}-{self.ImgManager.name_list[end_img]}" if start_img != end_img else f"{self.ImgManager.name_list[start_img]}"
+                    detail_text = f"{self.ImgManager.img_resolution[0]}x{self.ImgManager.img_resolution[1]} pixels / {img_range}"
+                else:
+                    detail_text = f"{self.ImgManager.img_resolution[0]}x{self.ImgManager.img_resolution[1]} pixels / {self.ImgManager.get_stitch_name()}"
+                self.SetStatusText_(["-1", "-1", detail_text, "-1"])
+            except:
+                self.SetStatusText_(["-1", "-1", f"{self.ImgManager.img_resolution[0]}x{self.ImgManager.img_resolution[1]} pixels", "-1"])
+        # Fix the issue where the AutoWinSize button is unresponsive
+        if self.auto_layout_check.Value:
+            self.auto_layout()
         else:
-            self.SetStatusText_(
-                ["-1", "-1", "***Error: no image in this dir!***", "-1"])
-        self.auto_layout()
-        self.SetStatusText_(["Stitch", "-1", "-1", "-1"])
+            # Defer layout refresh to avoid forcing window resize while still updating scrollbars
+            wx.CallAfter(self.scrolledWindow_img.FitInside)
+            wx.CallAfter(self.Layout)
 
     def auto_layout(self, frame_resize=False):
         # Auto Layout
@@ -1292,6 +1752,19 @@ class MulimgViewer (MulimgViewerGui):
                 id_list.append(i)
             else:
                 id_list.append(0)
+        current_id = max(id_list)
+
+        if hasattr(self.ImgManager, '_show_all_func_enabled') and self.ImgManager._show_all_func_enabled:
+            layout_row, layout_col = self.ImgManager._show_all_func_layout
+            original_rows, original_cols = self.ImgManager._original_row_col
+            func_layout_vertical = getattr(self.ImgManager, '_func_layout_vertical', False)
+            total_cols = layout_col * original_cols
+            final_row = current_id // total_cols
+            final_col = current_id % total_cols
+            orig_row = final_row % original_rows
+            orig_col = final_col % original_cols
+            original_id = orig_row * original_cols + orig_col
+            current_id = original_id
         if img:
             return self.ImgManager.xy_grids_id_list[max(id_list)]
         else:
@@ -1303,6 +1776,11 @@ class MulimgViewer (MulimgViewerGui):
         else:
             self.title_down_up.SetLabel('Down')
 
+    def title_rename_fc(self, event):
+        if hasattr(self.ImgManager, 'layout_params') and len(self.ImgManager.layout_params) > 17:
+            if len(self.ImgManager.layout_params[17]) > 12:
+                self.ImgManager.layout_params[17][12] = self.title_show_rename.Value
+
     def parallel_sequential_fc(self, event):
         if self.parallel_sequential.Value:
             self.parallel_to_sequential.Value = False
@@ -1313,18 +1791,25 @@ class MulimgViewer (MulimgViewerGui):
 
     def title_auto_fc(self, event):
         titles = [self.title_down_up, self.title_show_parent,
-                  self.title_show_name, self.title_show_suffix, self.title_show_prefix, self.title_position, self.title_exif]
+                  self.title_show_name, self.title_show_suffix, self.title_show_prefix, self.title_position, self.title_exif, self.title_show_rename]
         if self.title_auto.Value:
             for title in titles:
                 title.Enabled = False
+            self.title_exif.SetValue(False)
+            #self.title_show_rename.SetValue(False)
         else:
             for title in titles:
                 title.Enabled = True
 
+        if hasattr(self, 'ImgManager') and hasattr(self.ImgManager, 'layout_params'):
+            if len(self.ImgManager.layout_params) > 17:
+                self.ImgManager.layout_params[17][11] = self.title_exif.Value
+                if len(self.ImgManager.layout_params[17]) > 12:
+                    self.ImgManager.layout_params[17][12] = self.title_show_rename.Value
+
     def select_img_box_func(self, event):
         if self.select_img_box.Value:
             self.box_id = -1
-        event.Skip()
 
     def draw_color_change(self, event):
         if self.select_img_box.Value:
@@ -1333,7 +1818,14 @@ class MulimgViewer (MulimgViewerGui):
                     self.checkBox_auto_draw_color.Value = False
                 self.color_list[self.box_id] = self.colourPicker_draw.GetColour()
                 self.refresh(event)
-        event.Skip()
+
+    def on_show_all_func_changed(self, event):
+        if self.show_all_func.GetValue():
+            self.show_custom_func.SetValue(False)
+
+    def on_show_custom_func_changed(self, event):
+        if self.show_custom_func.GetValue():
+            self.show_all_func.SetValue(False)
 
     def hidden(self, event):
         if self.hidden_flag == 0:
@@ -1355,6 +1847,27 @@ class MulimgViewer (MulimgViewerGui):
         # issue: You need to change the window size, then the scrollbar starts to display.
         self.scrolledWindow_set.FitInside()
         self.auto_layout()
+
+    def _bind_settings_wheel_guard(self):
+        # Controls that should handle the wheel event
+        swallow_types = (wx.Choice, wx.ComboBox, wx.SpinCtrl, wx.SpinCtrlDouble)
+
+        # Reroute wheel event to scrolled window
+        def reroute_wheel(event):
+            clone = event.Clone()
+            clone.SetEventObject(self.scrolledWindow_set)
+            clone.ResumePropagation(wx.EVENT_PROPAGATE_MAX)
+            self.scrolledWindow_set.GetEventHandler().ProcessEvent(clone)
+
+        # Recursively bind wheel event to relevant controls
+        def walk(win):
+            for child in win.GetChildren():
+                if isinstance(child, swallow_types):
+                    child.Bind(wx.EVT_MOUSEWHEEL, reroute_wheel)
+                if child.GetChildren():
+                    walk(child)
+
+        walk(self.scrolledWindow_set)
 
     def save_configuration(self, event):
         data = {
@@ -1391,7 +1904,7 @@ class MulimgViewer (MulimgViewerGui):
             'auto_layout_check': self.auto_layout_check.GetValue(),
             'one_img': self.one_img.GetValue(),
             'onetitle': self.onetitle.GetValue(),
-            'customfunc': self.customfunc.GetValue(),
+            'customfunc': self.show_custom_func.GetValue(),
             'show_box': self.show_box.GetValue(),
             'show_box_in_crop': self.show_box_in_crop.GetValue(),
             'select_img_box': self.select_img_box.GetValue(),
@@ -1403,6 +1916,11 @@ class MulimgViewer (MulimgViewerGui):
             'title_show_suffix': self.title_show_suffix.GetValue(),
             'title_down_up': self.title_down_up.GetValue(),
             'save_format': self.save_format.GetSelection(),
+            'title_show_rename': self.title_show_rename.GetValue(),
+            'customfunc_choice': self.customfunc_choice.GetSelection(),
+            'show_all_func': self.show_all_func.GetValue(),
+            'show_all_func_layout': self.show_all_func_layout.GetValue(),
+            'func_layout_vertical': self.func_layout_vertical.GetValue(),
         }
         flip_cursor_path = Path(get_resource_path(str(Path("configs"))))
         flip_cursor_path = str(flip_cursor_path / "output.json")
@@ -1447,7 +1965,7 @@ class MulimgViewer (MulimgViewerGui):
             self.auto_layout_check.SetValue(data['auto_layout_check'])
             self.one_img.SetValue(data['one_img'])
             self.onetitle.SetValue(data['onetitle'])
-            self.customfunc.SetValue(data['customfunc'])
+            self.show_custom_func.SetValue(data['show_custom_func'])
             self.show_box.SetValue(data['show_box'])
             self.show_box_in_crop.SetValue(data['show_box_in_crop'])
             self.select_img_box.SetValue(data['select_img_box'])
@@ -1459,6 +1977,26 @@ class MulimgViewer (MulimgViewerGui):
             self.title_show_suffix.SetValue(data['title_show_suffix'])
             self.title_down_up.SetValue(data['title_down_up'])
             self.save_format.SetSelection(data['save_format'])
+            self.title_show_rename.SetValue(data.get('title_show_rename', False))
+            self.ImgManager.load_exif_display_config(force_reload=True)
+            if 'customfunc_choice' in data:
+                self.customfunc_choice.SetSelection(data['customfunc_choice'])
+            else:
+                self.customfunc_choice.SetSelection(0)
+            if 'show_all_func' in data:
+                self.show_all_func.SetValue(data['show_all_func'])
+            else:
+                self.show_all_func.SetValue(False)
+
+            if 'show_all_func_layout' in data:
+                self.show_all_func_layout.SetValue(data['show_all_func_layout'])
+            else:
+                self.show_all_func_layout.SetValue("2,2")
+
+            if 'func_layout_vertical' in data:
+                self.func_layout_vertical.SetValue(data['func_layout_vertical'])
+            else:
+                self.func_layout_vertical.SetValue(False)
 
     def reset_configuration(self, event):
         json_path = Path(get_resource_path(str(Path("configs"))))
@@ -1466,3 +2004,221 @@ class MulimgViewer (MulimgViewerGui):
         output_s_json_path = str(json_path / "output_s.json")
         self.load_configuration(event, config_name="output_s.json")
         shutil.copy(output_s_json_path, output_json_path)
+
+    def add_custom_algorithm(self, event):
+        algorithm_path = self.custom_algorithm_input.GetValue().strip()
+        if not algorithm_path:
+            return
+        try:
+            source_path = Path(algorithm_path)
+            if not source_path.exists():
+                wx.MessageBox(f"Path does not exist: {algorithm_path}", "Path Error", wx.OK | wx.ICON_ERROR)
+                return
+            if not source_path.is_dir():
+                wx.MessageBox(f"Path must be a folder: {algorithm_path}", "Path Error", wx.OK | wx.ICON_ERROR)
+                return
+            # Check if main.py file exists
+            main_file = source_path / "main.py"
+            if not main_file.exists():
+                wx.MessageBox(f"main.py file missing in algorithm folder: {algorithm_path}", "File Missing", wx.OK | wx.ICON_ERROR)
+                return
+        except Exception as e:
+            wx.MessageBox(f"Path format error: {str(e)}", "Path Error", wx.OK | wx.ICON_ERROR)
+            return
+        algorithm_name = source_path.name
+        current_choices = []
+        for i in range(self.customfunc_choice.GetCount()):
+            current_choices.append(self.customfunc_choice.GetString(i))
+
+        if algorithm_name in current_choices:
+            wx.MessageBox(f"Algorithm '{algorithm_name}' already exists!", "Duplicate Algorithm", wx.OK | wx.ICON_WARNING)
+            return
+        try:
+            self.copy_algorithm_from_path(source_path, algorithm_name)
+
+            self.custom_algorithms.append(algorithm_name)
+            time.sleep(0.1)
+            def update_ui():
+                self.refresh_algorithm_list()
+                try:
+                    modules_to_clear = [
+                        'mulimgviewer.src.custom_func.main',
+                        'custom_func.main',
+                        '.custom_func.main'
+                    ]
+                    for module_name in modules_to_clear:
+                        if module_name in sys.modules:
+                            del sys.modules[module_name]
+                    available_algorithms = get_available_algorithms()
+
+                    if algorithm_name in available_algorithms:
+                        index = available_algorithms.index(algorithm_name)
+                        self.customfunc_choice.SetSelection(index)
+                except:
+                    pass
+                self.custom_algorithm_input.SetValue("")
+                self.customfunc_choice.Refresh()
+                self.customfunc_choice.Update()
+                self.Update()
+                parent = self.customfunc_choice.GetParent()
+                if parent:
+                    parent.Refresh()
+                    parent.Update()
+                self.Layout()
+                wx.MessageBox(f"Algorithm '{algorithm_name}' added successfully from path '{algorithm_path}'!", "Add Success", wx.OK | wx.ICON_INFORMATION)
+            wx.CallAfter(update_ui)
+        except Exception as e:
+            wx.MessageBox(f"Failed to add algorithm: {str(e)}", "Add Failed", wx.OK | wx.ICON_ERROR)
+
+    def copy_algorithm_from_path(self, source_path, algorithm_name):
+        target_folder = Path(__file__).parent / "custom_func" / algorithm_name
+        try:
+            if target_folder.exists():
+                shutil.rmtree(str(target_folder))
+            shutil.copytree(str(source_path), str(target_folder))
+        except Exception as e:
+            raise e
+
+    def remove_custom_algorithm(self, event):
+        selected_index = self.customfunc_choice.GetSelection()
+        if selected_index == wx.NOT_FOUND:
+            wx.MessageBox("Please select an algorithm to remove first!", "No Algorithm Selected", wx.OK | wx.ICON_WARNING)
+            return
+        selected_algorithm = self.customfunc_choice.GetString(selected_index)
+        dlg = wx.MessageDialog(self, f"Are you sure you want to remove algorithm '{selected_algorithm}'?", "Confirm Removal", wx.YES_NO | wx.ICON_QUESTION)
+        if dlg.ShowModal() == wx.ID_YES:
+            try:
+                self.remove_custom_algorithm_folder(selected_algorithm)
+
+                if selected_algorithm in self.custom_algorithms:
+                    self.custom_algorithms.remove(selected_algorithm)
+
+                modules_to_clear = [
+                    'mulimgviewer.src.custom_func.main',
+                    'custom_func.main',
+                    '.custom_func.main'
+                ]
+                for module_name in modules_to_clear:
+                    if module_name in sys.modules:
+                        del sys.modules[module_name]
+                self.refresh_algorithm_list()
+                wx.MessageBox(f"Algorithm '{selected_algorithm}' removed successfully!", "Remove Success", wx.OK | wx.ICON_INFORMATION)
+            except Exception as e:
+                wx.MessageBox(f"Failed to remove algorithm: {str(e)}", "Remove Failed", wx.OK | wx.ICON_ERROR)
+        dlg.Destroy()
+
+    def create_custom_algorithm_template(self, algorithm_name):
+        algorithm_folder = Path(__file__).parent / "custom_func" / algorithm_name
+        desktop_algorithm_folder = Path.home() / "Desktop" / algorithm_name
+        if desktop_algorithm_folder.exists() and (desktop_algorithm_folder / "main.py").exists():
+            try:
+                if algorithm_folder.exists():
+                    shutil.rmtree(str(algorithm_folder))
+                shutil.copytree(str(desktop_algorithm_folder), str(algorithm_folder))
+                return
+            except Exception as e:
+                pass
+        if not algorithm_folder.exists():
+            os.makedirs(str(algorithm_folder))
+        template_content = f'''\'\'\'
+{algorithm_name} Algorithm
+Custom algorithm - Implement your image processing logic here
+\'\'\'
+from PIL import Image
+from pathlib import Path
+import os
+
+def custom_process_img(img):
+    """
+    Custom image processing function
+    input: image(pillow)
+    output: image(pillow)
+
+    Implement your image processing algorithm here
+    Examples:
+    - img = img.convert('L')  # Convert to grayscale
+    - img = img.transpose(Image.FLIP_LEFT_RIGHT)  # Horizontal flip
+    """
+    # Default: no processing, return original image
+    return img
+
+def main(img_list, save_path, name_list=None, algorithm_name="{algorithm_name}"):
+    """
+    Batch process image list
+    """
+    i = 0
+    out_img_list = []
+    if save_path != "":
+        flag_save = True
+        save_path = Path(save_path) / "processing_function" / algorithm_name
+        if not save_path.exists():
+            os.makedirs(str(save_path))
+    else:
+        flag_save = False
+
+    for img in img_list:
+        img = custom_process_img(img)
+
+        out_img_list.append(img)
+        if flag_save:
+            if isinstance(name_list, list) and i < len(name_list):
+                img_path = save_path / name_list[i]
+            else:
+                img_path = save_path / (str(i) + ".png")
+            img.save(str(img_path))
+        i += 1
+    return out_img_list
+'''
+
+        template_path = algorithm_folder / "main.py"
+        with open(template_path, 'w', encoding='utf-8') as f:
+            f.write(template_content)
+
+    def remove_custom_algorithm_folder(self, algorithm_name):
+        algorithm_folder = Path(__file__).parent / "custom_func" / algorithm_name
+        if algorithm_folder.exists():
+            try:
+                shutil.rmtree(str(algorithm_folder))
+            except Exception as e:
+                pass
+
+    def refresh_algorithm_list(self):
+        try:
+            modules_to_clear = [
+                'mulimgviewer.src.custom_func.main',
+                'custom_func.main',
+                '.custom_func.main'
+            ]
+            for module_name in modules_to_clear:
+                if module_name in sys.modules:
+                    del sys.modules[module_name]
+            try:
+                if 'custom_func.main' in sys.modules:
+                    importlib.reload(sys.modules['custom_func.main'])
+            except:
+                pass
+            available_algorithms = get_available_algorithms()
+            current_selection = self.customfunc_choice.GetSelection()
+            current_algorithm = ""
+            if current_selection != wx.NOT_FOUND:
+                current_algorithm = self.customfunc_choice.GetString(current_selection)
+            self.customfunc_choice.Clear()
+            for i, algorithm in enumerate(available_algorithms):
+                self.customfunc_choice.Append(algorithm)
+            if current_algorithm and current_algorithm in available_algorithms:
+                index = available_algorithms.index(current_algorithm)
+                self.customfunc_choice.SetSelection(index)
+            else:
+                self.customfunc_choice.SetSelection(0)
+        except:
+            self.customfunc_choice.Clear()
+            default_algorithms = ["Image Enhancement", "Image Darkening", "Gaussian Blur", "Histogram Equalization"]
+            for algorithm in default_algorithms:
+                self.customfunc_choice.Append(algorithm)
+            self.customfunc_choice.SetSelection(0)
+
+    def disable_accel(self, event):
+        self.SetAcceleratorTable(wx.NullAcceleratorTable)
+
+    def enable_accel(self, event):
+        self.SetAcceleratorTable(self.acceltbl)
